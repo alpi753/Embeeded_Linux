@@ -35,57 +35,76 @@ static struct timer_list my_timer;
 static wait_queue_head_t my_queue;//  POLL İÇİN EKLENELER
 static int flag = 0;
 
+static int num_packet=0;
+static int read_pos = 0;   // Buffer'dan veri okuma pozisyonu
+static int write_pos = 0;  // Buffer'a veri yazma pozisyonu
 
 
+
+
+static void packet_counter(void){
+
+printk(KERN_INFO "Packet counter içindeyiz!");
+num_packet += 1;
+if(num_packet % 5==0)
+    {
+        flag =1;
+        wake_up_interruptible(&my_queue);
+        
+    }
+}
 
 
 static int dev_open(struct inode *inodep, struct file *filep){
 	
-    printk(KERN_INFO "alperen: Device has been opened\n");
+        printk(KERN_INFO "alperen: Device has been opened\n");
     return 0;
 }
 
 static int dev_release(struct inode *inodep, struct file *filep){
-	del_timer(&my_timer);
-    printk(KERN_INFO "alperen: Device successfully closed\n");
+	    del_timer(&my_timer);
+        printk(KERN_INFO "alperen: Device successfully closed\n");
     
     return 0;
 }
 
 static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *offset){
 
-    printk(KERN_INFO "alperen: Reading from device\n");	    
-    int i = copy_to_user( buffer , kernel_buffer , 100 );
+        printk(KERN_INFO "alperen: Reading from device\n");	    
+        int i = copy_to_user( buffer , kernel_buffer , 100 );
     if ( i!=0 ) 
     {
     	printk(KERN_ERR "Okuma islemi basarisiz\n");
-   	 return -EFAULT;
+   	    return -EFAULT;
     }
     else
     printk(KERN_INFO "%lu byte basarili bir sekilde okundu\n", len);
-    printk(KERN_INFO "%s",kernel_buffer);
+        printk(KERN_INFO "%s",kernel_buffer);
     return 0;
 }
 
-static ssize_t dev_write (struct file *filep, const char *buffer, size_t len, loff_t *offset){
+static ssize_t dev_write (struct file *filep, const char *buffer, size_t len, loff_t *offset)
+{
 	
-	mod_timer(&my_timer, jiffies + msecs_to_jiffies(timer_msec));
-	
-    printk(KERN_INFO "alperen: Writing to device\n");
-    int k = copy_from_user( kernel_buffer , buffer , len );
-    printk("kernel_buffer icerisinde bulunan veri: %s",kernel_buffer);
-    
-    if( k !=0 )
-    {
-    	printk(KERN_ERR "Kullanicidan veri yazilamadi.\n");
-    	return -EFAULT;
-    };
-    
-     // kernel_buffer içerisine bufferdan gelen(app de write komutu icindeki ikinci parametre torba buradaki buffer'a karsilik geliyor. Len de sizeof(torba)dır aslında)
-    printk(KERN_INFO "%lu byte basarili bir sekilde yazildi\n",len);
+	//mod_timer(&my_timer, jiffies + msecs_to_jiffies(timer_msec)); TİMER BU KODDA GEREKLİ DEĞİL.
+        int bytes_to_write;
+        bytes_to_write = min((int)len, BUFFER_SIZE - write_pos + read_pos - 1); //eğer buradan ikinci argüman dönerse paket içeriği tüm veriyi kapsamaz.Bunu eksiklik olarak görüyorum ,farkındayım. 
+	//printk("(int)len: %d",(int)len);
+    if (bytes_to_write <= 0) {
+        return -EINVAL;  // Buffer doluysa hata döner
+    }
+    if (copy_from_user(&kernel_buffer[write_pos], buffer, bytes_to_write)) {//yazma işlemi burada yapılıyor
+        return -EFAULT;
+    }
+        printk(KERN_INFO "alperen: Writing to device\n");
+        write_pos = (write_pos + bytes_to_write) % BUFFER_SIZE;  // Yazma pozisyonunu güncelle 
+        printk("kernel_buffer icerisinde bulunan veri: %s",kernel_buffer);
+        // kernel_buffer içerisine bufferdan gelen(app de write komutu icindeki ikinci parametre torba buradaki buffer'a karsilik geliyor. Len de sizeof(torba)dır aslında)
+        printk(KERN_INFO "%lu byte basarili bir sekilde yazildi\n",bytes_to_write);
+        //printk(KERN_INFO "write_pos= %d \n",write_pos);
+        packet_counter();
    
-   
-    return len;
+    return bytes_to_write;
 } 
 
 static long dev_ioctl (struct file *file, unsigned int cmd, unsigned long arg)
@@ -119,14 +138,14 @@ static long dev_ioctl (struct file *file, unsigned int cmd, unsigned long arg)
 static void timer_callback(struct timer_list *timer) {
 	flag = 1;
 	wake_up_interruptible(&my_queue); //wait_queue yi boşaltır. Tekrar polle sokar
-	printk(KERN_INFO "alperen: timer callback çalıştı.");
+	printk(KERN_INFO "alperen: timer callback çalişti.");
 }
 	 
 static unsigned int mychardev_poll(struct file *file, poll_table *wait) {
 	
-	__poll_t mask =0;
+	    __poll_t mask =0;
 
-	poll_wait(file, &my_queue, wait);	
+	    poll_wait(file, &my_queue, wait);	
     if (flag) 
     {
         flag = 0;
@@ -135,7 +154,7 @@ static unsigned int mychardev_poll(struct file *file, poll_table *wait) {
     }
     else
     {
-	mask |= 0;
+	    mask |= 0;
 	return  mask; //return 0 nereye  döndürüyor seni?
     }	
 }
@@ -177,13 +196,13 @@ static int __init mychar_init(void){
         class_destroy(myCharClass);
         unregister_chrdev(majorNumber, DEVICE_NAME);
         printk(KERN_ALERT "Failed to create the device\n");
-        return PTR_ERR(myCharDevice);
+    return PTR_ERR(myCharDevice);
     }
     printk(KERN_INFO "alperen: device class created correctly\n");
     
-     init_waitqueue_head(&my_queue);
+        init_waitqueue_head(&my_queue);
 
-     timer_setup(&my_timer, timer_callback, 0); // timer setup sayacı başlatmaz 
+        timer_setup(&my_timer, timer_callback, 0); // timer setup sayacı başlatmaz 
     
    
     
